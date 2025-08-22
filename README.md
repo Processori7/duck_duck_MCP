@@ -25,7 +25,7 @@
     # Активируйте (Windows)
     venv\Scripts\activate
     # Активируйте (Linux/macOS)
-    # source .venv/bin/activate
+    source .venv/bin/activate
     ```
     *Примечание: Если вы используете `uv`, он автоматически создаст и активирует `.venv` при первом запуске `uv pip install`.*
 
@@ -34,7 +34,7 @@
     # С uv (рекомендуется)
     uv pip install ddgs
     # Или с pip
-    # pip install ddgs
+    pip install ddgs
     ```
     *Примечание: `ddgs` - это библиотека для работы с DuckDuckGo Search.*
 
@@ -51,7 +51,7 @@
     # Если вы в виртуальном окружении
     python ddg_mcp_server.py
     # Или с полным путем к python из venv
-    # venv\Scripts\python.exe ddg_mcp_server.py
+    venv\Scripts\python.exe ddg_mcp_server.py
     ```
 
 ### Режим TCP
@@ -63,7 +63,7 @@
     # Если вы в виртуальном окружении
     python tcp_ddg_server.py
     # Или с полным путем к python из venv
-    # venv\Scripts\python.exe tcp_ddg_server.py
+    venv\Scripts\python.exe tcp_ddg_server.py
     ```
 
 2.  По умолчанию сервер запустится на `127.0.0.1:8765`. Вы увидите сообщение:
@@ -199,6 +199,8 @@
 
 ## Примеры конфигов
 ### Для TCP
+
+```
 {
   "mcpServers": {
     "ddg-tcp": {
@@ -210,8 +212,10 @@
       "active": true
     }
   }
-}  
+} 
+```
 Jan:  
+```
 {
   "command": "tcp",
   "args": [
@@ -220,7 +224,10 @@ Jan:
   "env": {},
   "active": true
 }
+```  
+Для Jan рекомендую использовать TCP
 ### Конфигурация для запуска напрямую 
+```
 {
   "mcpServers": {
     "ddg-stdio": {
@@ -233,6 +240,7 @@ Jan:
     }
   }
 }
+```
 ## Обработка ошибок
 
 Сервер может возвращать следующие ошибки:
