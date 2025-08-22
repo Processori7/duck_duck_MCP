@@ -1,0 +1,283 @@
+{
+  "name": "ddg-search",
+  "version": "1.0.0",
+  "description": "MCP сервер для поиска информации через DuckDuckGo Search",
+  "tools": [
+    {
+      "name": "get_search_operators",
+      "description": "Получить документацию по операторам поиска DDG",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_text",
+      "description": "Текстовый поиск через DDGS",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Поисковый запрос"
+          },
+          "region": {
+            "type": "string",
+            "description": "Регион (us-en, uk-en, ru-ru, и т.д.)",
+            "default": "us-en"
+          },
+          "safesearch": {
+            "type": "string",
+            "enum": ["on", "moderate", "off"],
+            "description": "Уровень фильтрации",
+            "default": "moderate"
+          },
+          "timelimit": {
+            "type": "string",
+            "enum": ["d", "w", "m", "y"],
+            "description": "Ограничение по времени (d, w, m, y)",
+            "default": null
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Максимальное количество результатов",
+            "default": 10
+          },
+          "page": {
+            "type": "number",
+            "description": "Номер страницы результатов",
+            "default": 1
+          },
+          "backend": {
+            "type": "string",
+            "description": "Поисковые движки (auto, google, bing, и т.д.)",
+            "default": "auto"
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_images",
+      "description": "Поиск изображений через DDGS",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Поисковый запрос"
+          },
+          "region": {
+            "type": "string",
+            "description": "Регион",
+            "default": "us-en"
+          },
+          "safesearch": {
+            "type": "string",
+            "enum": ["on", "moderate", "off"],
+            "description": "Уровень фильтрации",
+            "default": "moderate"
+          },
+          "timelimit": {
+            "type": "string",
+            "enum": ["d", "w", "m", "y"],
+            "description": "Ограничение по времени",
+            "default": null
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Максимальное количество результатов",
+            "default": 10
+          },
+          "page": {
+            "type": "number",
+            "description": "Номер страницы результатов",
+            "default": 1
+          },
+          "backend": {
+            "type": "string",
+            "description": "Поисковые движки",
+            "default": "auto"
+          },
+          "size": {
+            "type": "string",
+            "enum": ["Small", "Medium", "Large", "Wallpaper"],
+            "description": "Размер изображения",
+            "default": null
+          },
+          "color": {
+            "type": "string",
+            "enum": ["color", "Monochrome", "Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Pink", "Brown", "Black", "Gray", "Teal", "White"],
+            "description": "Цвет изображения",
+            "default": null
+          },
+          "type_image": {
+            "type": "string",
+            "enum": ["photo", "clipart", "gif", "transparent", "line"],
+            "description": "Тип изображения",
+            "default": null
+          },
+          "layout": {
+            "type": "string",
+            "enum": ["Square", "Tall", "Wide"],
+            "description": "Макет изображения",
+            "default": null
+          },
+          "license_image": {
+            "type": "string",
+            "enum": ["any", "Public", "Share", "ShareCommercially", "Modify", "ModifyCommercially"],
+            "description": "Лицензия изображения",
+            "default": null
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_videos",
+      "description": "Поиск видео через DDGS",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Поисковый запрос"
+          },
+          "region": {
+            "type": "string",
+            "description": "Регион",
+            "default": "us-en"
+          },
+          "safesearch": {
+            "type": "string",
+            "enum": ["on", "moderate", "off"],
+            "description": "Уровень фильтрации",
+            "default": "moderate"
+          },
+          "timelimit": {
+            "type": "string",
+            "enum": ["d", "w", "m"],
+            "description": "Ограничение по времени",
+            "default": null
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Максимальное количество результатов",
+            "default": 10
+          },
+          "page": {
+            "type": "number",
+            "description": "Номер страницы результатов",
+            "default": 1
+          },
+          "backend": {
+            "type": "string",
+            "description": "Поисковые движки",
+            "default": "auto"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": ["high", "standard"],
+            "description": "Разрешение видео",
+            "default": null
+          },
+          "duration": {
+            "type": "string",
+            "enum": ["short", "medium", "long"],
+            "description": "Длительность видео",
+            "default": null
+          },
+          "license_videos": {
+            "type": "string",
+            "enum": ["creativeCommon", "youtube"],
+            "description": "Лицензия видео",
+            "default": null
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_news",
+      "description": "Поиск новостей через DDGS",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Поисковый запрос"
+          },
+          "region": {
+            "type": "string",
+            "description": "Регион",
+            "default": "us-en"
+          },
+          "safesearch": {
+            "type": "string",
+            "enum": ["on", "moderate", "off"],
+            "description": "Уровень фильтрации",
+            "default": "moderate"
+          },
+          "timelimit": {
+            "type": "string",
+            "enum": ["d", "w", "m"],
+            "description": "Ограничение по времени",
+            "default": null
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Максимальное количество результатов",
+            "default": 10
+          },
+          "page": {
+            "type": "number",
+            "description": "Номер страницы результатов",
+            "default": 1
+          },
+          "backend": {
+            "type": "string",
+            "description": "Поисковые движки",
+            "default": "auto"
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_books",
+      "description": "Поиск книг через DDGS",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Поисковый запрос"
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Максимальное количество результатов",
+            "default": 10
+          },
+          "page": {
+            "type": "number",
+            "description": "Номер страницы результатов",
+            "default": 1
+          },
+          "backend": {
+            "type": "string",
+            "description": "Поисковые движки",
+            "default": "auto"
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "resources": []
+}
