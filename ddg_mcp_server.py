@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-MCP сервер для поиска информации через DuckDuckGo Search (DDGS)
+MCP server for searching information via DuckDuckGo Search (DDGS)
 """
 
 import json
 import sys
+import os
 from typing import Any, Dict, List, Optional
 
 try:
@@ -14,36 +15,58 @@ except ImportError:
     sys.exit(1)
 
 def send_message(data: Dict[str, Any]) -> None:
-    """Отправка сообщения через STDIO"""
+    """Send message via STDIO"""
     data_str = json.dumps(data, ensure_ascii=False)
-    sys.stdout.write(f'{len(data_str)}\n{data_str}\n')
-    sys.stdout.flush()
+    # If running in terminal (manual test) - pretty print for debugging
+    if sys.stdin.isatty():
+        print("=== Response ===")
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        print("=================")
+    else:
+        # If running via STDIO (Cline) - use MCP protocol
+        message = f'{len(data_str)}\n{data_str}\n'
+        sys.stdout.write(message)
+        sys.stdout.flush()
+        os.fsync(sys.stdout.fileno())  # Force sync
 
 def read_message() -> Optional[Dict[str, Any]]:
-    """Функция чтения сообщений через STDIO по протоколу MCP"""
+    """Read messages via STDIO according to MCP protocol"""
     try:
-        # Если запущен в терминале (ручной тест) - используем input()
+        # If running in terminal (manual test) - use interactive mode
         if sys.stdin.isatty():
-            line = input()
-            parsed = json.loads(line)
-            if isinstance(parsed, dict):
-                return parsed
-            else:
-                return None
+            print("=== Interactive Debug Mode ===")
+            print("Enter JSON-RPC requests (or 'quit' to exit):")
+            while True:
+                try:
+                    line = input("> ").strip()
+                    if line.lower() == 'quit':
+                        return None
+                    if line:
+                        parsed = json.loads(line)
+                        if isinstance(parsed, dict):
+                            return parsed
+                        else:
+                            print("Error: Not a dictionary")
+                except EOFError:
+                    return None
+                except json.JSONDecodeError as e:
+                    print(f"JSON Error: {e}")
+                except Exception as e:
+                    print(f"Error: {e}")
         else:
-            # Если запущен через STDIO (Jan) - используем протокол MCP
-            # Читаем длину сообщения
+            # If running via STDIO (Cline) - use MCP protocol
+            # Read message length
             length_line = sys.stdin.readline()
             if not length_line:
                 return None
 
-            # Пропускаем пустые строки
+            # Skip empty lines
             while length_line.strip() == "":
                 length_line = sys.stdin.readline()
                 if not length_line:
                     return None
             
-            # Проверяем, является ли строка JSON (ручной ввод через STDIO)
+            # Check if line is JSON (manual input via STDIO)
             stripped_line = length_line.strip()
             if stripped_line.startswith('{') and stripped_line.endswith('}'):
                 parsed = json.loads(stripped_line)
@@ -54,10 +77,10 @@ def read_message() -> Optional[Dict[str, Any]]:
 
             length = int(stripped_line)
 
-            # Читаем JSON-сообщение указанной длины
+            # Read JSON message of specified length
             message = sys.stdin.read(length)
 
-            # Пропускаем \n после сообщения
+            # Skip \n after message
             sys.stdin.read(1)
 
             parsed = json.loads(message)
@@ -224,17 +247,36 @@ def search_books(
         raise Exception(f"Ошибка поиска книг: {str(e)}")
 
 def handle_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Обработка входящего запроса"""
+    """Handle incoming request"""
     method = request.get("method")
     params = request.get("params", {})
     request_id = request.get("id")
 
-    # Обязательный метод initialize
+    # Handle client registration request
+    if method == "client/registerCapability":
+        # Just acknowledge the registration
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {}
+        }
+
+    # Handle progress notifications (no response needed)
+    if method == "progress":
+        # Just ignore progress notifications
+        return None
+
+    # Required initialize method
     if method == "initialize":
         return {
             "jsonrpc": "2.0",
             "id": request_id,
             "result": {
+                "protocolVersion": "2024-11-05",
+                "serverInfo": {
+                    "name": "ddg-search",
+                    "version": "1.0.0"
+                },
                 "capabilities": {
                     "tools": {}
                 }
@@ -333,49 +375,55 @@ def handle_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 def main():
-    """Основной цикл сервера"""
+    """Main server loop"""
     try:
-        # Регистрация возможностей
-        send_message({
-            "jsonrpc": "2.0",
-            "method": "client/registerCapability",
-            "params": {
-                "registrations": []
-            }
-        })
-
-        # Бесконечный цикл обработки запросов
+        # If running in terminal - show welcome message
+        if sys.stdin.isatty():
+            print("DuckDuckGo MCP Server - Debug Mode")
+            print("Server info:")
+            print("  Name: ddg-search")
+            print("  Version: 1.0.0")
+            print("  Protocol: 2024-11-05")
+            print()
+        
+        # Infinite request processing loop
         while True:
             try:
                 message = read_message()
-                # print(f"DEBUG: Получено сообщение: {message}")  # Убрал file=sys.stderr
                 if message is None:
-                    # print("DEBUG: message is None, продолжаем")
-                    continue  # Продолжаем ждать
+                    # If message is None, it means EOF or connection closed
+                    break  # Exit the loop gracefully
                 
-                # Проверяем, что message - словарь
+                # Check that message is a dictionary
                 if not isinstance(message, dict):
-                    # print(f"DEBUG: message не словарь: {message}")
                     continue
 
                 response = handle_request(message)
                 if response:
-                    # print(f"DEBUG: Отправляем ответ: {response}")
                     send_message(response)
-            except Exception as e:
-                # print(f"DEBUG: Ошибка в цикле: {e}")
-                # Продолжаем цикл, не завершаемся
+                    
+            except KeyboardInterrupt:
+                # Graceful shutdown on Ctrl+C
+                if sys.stdin.isatty():
+                    print("\nServer shutdown requested.")
+                break
+            except Exception:
+                # For other errors, continue processing in STDIO mode
+                # or exit in debug mode
+                if sys.stdin.isatty():
+                    import traceback
+                    traceback.print_exc()
+                    break
                 continue
                 
-    except Exception as e:
-        # print(f"DEBUG: Фатальная ошибка: {e}")
-        # Отправляем ошибку клиенту
+    except Exception:
+        # Send error to client and exit
         error_response = {
             "jsonrpc": "2.0",
             "id": None,
             "error": {
                 "code": -32603,
-                "message": f"Server error: {str(e)}"
+                "message": "Server error"
             }
         }
         try:

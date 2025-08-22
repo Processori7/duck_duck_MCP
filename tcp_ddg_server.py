@@ -14,11 +14,7 @@ except ImportError:
     print("Ошибка: не найден ddg_mcp_server. Убедитесь, что файл в папке.")
     sys.exit(1)
 
-def send_message(conn, data):
-    """Отправка сообщения через TCP"""
-    data_str = json.dumps(data, ensure_ascii=False)
-    message = f'{len(data_str)}\n{data_str}\n'
-    conn.sendall(message.encode('utf-8'))
+
 
 def read_message(conn):
     """Чтение сообщения через TCP"""
