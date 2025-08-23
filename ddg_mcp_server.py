@@ -16,11 +16,11 @@ except ImportError:
 
 def send_message(data: Dict[str, Any]) -> None:
     """Send message via STDIO"""
-    data_str = json.dumps(data, ensure_ascii=False)
+    data_str = json.dumps(data, ensure_ascii=True)
     # If running in terminal (manual test) - pretty print for debugging
     if sys.stdin.isatty():
         print("=== Response ===")
-        print(json.dumps(data, ensure_ascii=False, indent=2))
+        print(json.dumps(data, ensure_ascii=True, indent=2))
         print("=================")
     else:
         # If running via STDIO (Cline) - use MCP protocol

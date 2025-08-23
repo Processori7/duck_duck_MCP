@@ -3,19 +3,25 @@ import json
 import socket
 import threading
 import sys
+import os
 
 # Импортируем логику из основного сервера
 try:
     from ddg_mcp_server import (
-        handle_request,
-        send_message
+        handle_request
     )
 except ImportError:
     print("Ошибка: не найден ddg_mcp_server. Убедитесь, что файл в папке.")
     sys.exit(1)
 
 
-
+def send_message_tcp(conn, data):
+    """Send message via TCP"""
+    data_str = json.dumps(data, ensure_ascii=True)
+    message = f'{len(data_str)}\n{data_str}\n'
+    conn.sendall(message.encode('utf-8'))
+    
+    
 def read_message(conn):
     """Чтение сообщения через TCP"""
     try:
@@ -28,10 +34,28 @@ def read_message(conn):
             length_bytes += chunk
         length_str = length_bytes.decode('utf-8').strip()
         
+        # Проверяем, что длина не пустая
+        if not length_str:
+            print("Получена пустая строка вместо длины сообщения")
+            return None
+            
         # Читаем сообщение
         length = int(length_str)
-        content = conn.recv(length).decode('utf-8')
+        content_bytes = b''
+        while len(content_bytes) < length:
+            chunk = conn.recv(length - len(content_bytes))
+            if not chunk:
+                return None
+            content_bytes += chunk
+            
+        content = content_bytes.decode('utf-8')
+        # Пропускаем \n после сообщения
+        conn.recv(1)
+        
         return json.loads(content)
+    except ValueError as e:
+        print(f"Ошибка преобразования длины: {e}")
+        return None
     except Exception as e:
         print(f"Ошибка чтения: {e}")
         return None
@@ -41,7 +65,7 @@ def handle_client(conn, addr):
     print(f"Клиент подключился: {addr}")
     try:
         # Отправляем регистрацию
-        send_message(conn, {
+        send_message_tcp(conn, {
             "jsonrpc": "2.0",
             "method": "client/registerCapability",
             "params": {"registrations": []}
@@ -55,7 +79,10 @@ def handle_client(conn, addr):
             
             response = handle_request(message)
             if response:
-                send_message(conn, response)
+                send_message_tcp(conn, response)
+                # Добавим небольшую задержку, чтобы клиент успел прочитать ответ
+                import time
+                time.sleep(0.1)
     except Exception as e:
         print(f"Ошибка обработки клиента: {e}")
     finally:
