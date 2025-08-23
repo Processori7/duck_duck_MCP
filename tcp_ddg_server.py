@@ -17,9 +17,11 @@ except ImportError:
 
 def send_message_tcp(conn, data):
     """Send message via TCP"""
-    data_str = json.dumps(data, ensure_ascii=True)
-    message = f'{len(data_str)}\n{data_str}\n'
-    conn.sendall(message.encode('utf-8'))
+    # Use ensure_ascii=False to properly encode Unicode
+    data_str = json.dumps(data, ensure_ascii=False)
+    data_bytes = data_str.encode('utf-8')
+    message = f'{len(data_bytes)}\n'.encode('utf-8') + data_bytes + b'\n'
+    conn.sendall(message)
     
     
 def read_message(conn):
