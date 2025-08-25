@@ -151,84 +151,64 @@ def get_search_operators() -> Dict[str, Any]:
     }
 
 def fix_encoding(text: str) -> str:
-    """Попытка исправить кодировку текста"""
+    """Enhanced multilingual text encoding repair with comprehensive character support"""
     if not text:
         return text
     
     original_text = text
     
-    # Сначала пробуем ftfy
+    # Strategy 1: Use ftfy for general Unicode normalization
     try:
         fixed_by_ftfy = ftfy.fix_text(text)
-        # Check if ftfy actually improved the text
         if fixed_by_ftfy != text:
+            # Validate improvement by checking for proper character ranges
             cyrillic_count = sum(1 for c in fixed_by_ftfy if 'а' <= c <= 'я' or 'А' <= c <= 'Я')
-            if cyrillic_count > 0:
-                logger.debug(f"Fixed encoding with ftfy: '{text[:50]}...' -> '{fixed_by_ftfy[:50]}...'")
+            latin_count = sum(1 for c in fixed_by_ftfy if ('a' <= c <= 'z' or 'A' <= c <= 'Z'))
+            emoji_count = sum(1 for c in fixed_by_ftfy if ord(c) >= 0x1F600 and ord(c) <= 0x1F64F)
+            
+            if cyrillic_count > 0 or emoji_count > 0:
+                logger.debug(f"ftfy improved text: Cyrillic={cyrillic_count}, Emoji={emoji_count}")
                 text = fixed_by_ftfy
     except ImportError:
         logger.debug("ftfy not available, using manual encoding fix")
     except Exception as e:
         logger.debug(f"ftfy failed: {e}")
     
-    # Проверяем на наличие типичных признаков неправильной кодировки
-    bad_patterns = [
-        # Common double-encoding patterns
-        'Р°', 'Р±', 'РІ', 'Рі', 'Р´', 'Рµ', 'Р¶', 'Р·', 'Ри', 'Р¹', 'Рє', 'Р»', 'Рј', 'РЍ', 'Рѕ', 'Р¿',
-        'СЂ', 'СЃ', 'С‚', 'Сѓ', 'С„', 'С…', 'С†', 'С‡', 'С€', 'С‰', 'СЌ', 'С‹', 'СЍ', 'СЎ', 'СŽ',
-        # Latin-1 interpreted as UTF-8 patterns
-        'Ð', 'Ñ', 'Â', 'Ã', 'â', 'ç',
-        # Windows-1252 patterns
-        '¤', '¦', '¨', '©', 'ª', '«', '¬', '®', '°', '±', '²', '³',
-        'Ä', 'Å', 'Æ', 'Ç', 'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï',
-        # Specific corrupted patterns we've seen
-        'Рь', 'Рѕ', 'РІ', 'СЃ', 'С‚', 'Ри'
-    ]
+    # Enhanced corruption detection patterns
+    corruption_indicators = get_encoding_corruption_patterns()
     
-    if any(pattern in text for pattern in bad_patterns):
-        logger.debug(f"Detected corrupted encoding patterns in: '{text[:50]}...'")
+    if has_encoding_corruption(text, corruption_indicators):
+        logger.debug(f"Detected encoding corruption in: '{text[:50]}...'")
         
-        # Try different decoding strategies
+        # Advanced encoding repair strategies
         strategies = [
-            # Strategy 1: Assume text was UTF-8 but decoded as Windows-1251, then re-encoded as UTF-8
-            lambda t: t.encode('windows-1251', errors='ignore').decode('utf-8', errors='ignore'),
-            # Strategy 2: Assume text was UTF-8 but decoded as ISO-8859-1 (Latin-1)
-            lambda t: t.encode('iso-8859-1', errors='ignore').decode('utf-8', errors='ignore'),
-            # Strategy 3: Try CP1252 (Windows-1252)
-            lambda t: t.encode('windows-1252', errors='ignore').decode('utf-8', errors='ignore'),
-            # Strategy 4: Double UTF-8 encoding issue
-            lambda t: t.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore'),
-            # Strategy 5: Manual character replacement for known corrupted sequences
-            lambda t: manual_fix_russian_encoding(t),
+            # Strategy 1: Windows-1251 misinterpretation (common for Cyrillic)
+            lambda t: repair_windows1251_corruption(t),
+            # Strategy 2: ISO-8859-1 (Latin-1) misinterpretation  
+            lambda t: repair_latin1_corruption(t),
+            # Strategy 3: CP1252 (Windows-1252) corruption
+            lambda t: repair_cp1252_corruption(t),
+            # Strategy 4: Double UTF-8 encoding
+            lambda t: repair_double_utf8(t),
+            # Strategy 5: Manual character mapping for known patterns
+            lambda t: manual_fix_multilingual_encoding(t),
+            # Strategy 6: Mojibake detection and repair
+            lambda t: repair_mojibake_patterns(t),
+            # Strategy 7: HTML entity decoding
+            lambda t: repair_html_entities(t)
         ]
         
-        best_result = text
-        best_cyrillic_ratio = 0
-        
-        for i, strategy in enumerate(strategies, 1):
-            try:
-                fixed = strategy(text)
-                if fixed and len(fixed) > 0:
-                    # Count Cyrillic characters in the result
-                    cyrillic_count = sum(1 for c in fixed if 'а' <= c <= 'я' or 'А' <= c <= 'Я')
-                    cyrillic_ratio = cyrillic_count / len(fixed) if len(fixed) > 0 else 0
-                    
-                    # If we have a good amount of Cyrillic and it's better than what we had
-                    if cyrillic_ratio > best_cyrillic_ratio and cyrillic_ratio >= 0.05:  # At least 5% Cyrillic
-                        best_result = fixed
-                        best_cyrillic_ratio = cyrillic_ratio
-                        logger.debug(f"Strategy {i} improved text: '{text[:50]}...' -> '{fixed[:50]}...' (Cyrillic: {cyrillic_ratio:.2%})")
-            except Exception as e:
-                logger.debug(f"Strategy {i} failed: {e}")
+        best_result = evaluate_encoding_candidates(text, strategies)
         
         if best_result != text:
+            logger.info(f"Successfully repaired encoding: '{text[:30]}...' -> '{best_result[:30]}...'")
             return best_result
     
-    # If text looks normal or couldn't be fixed, return as is
-    return text
+    # Final normalization for any remaining issues
+    return normalize_text_final(text)
 
-def manual_fix_russian_encoding(text: str) -> str:
-    """Ручное исправление распространенных повреждений кодировки русского текста"""
+def manual_fix_multilingual_encoding(text: str) -> str:
+    """Enhanced multilingual encoding repair with comprehensive character mapping"""
     replacements = {
         # Common double-encoded Cyrillic patterns
         'Р°': 'а',  # а
@@ -280,6 +260,118 @@ def manual_fix_russian_encoding(text: str) -> str:
             logger.debug(f"Replaced '{corrupted}' -> '{correct}' in text")
     
     return result
+
+def get_encoding_corruption_patterns():
+    return {
+        'double_encoded_cyrillic': ['Р°', 'Р±', 'РІ', 'Рі', 'Р´', 'Рµ', 'Р¶', 'Р·', 'Ри', 'Р¹'],
+        'latin1_as_utf8': ['Ð', 'Ñ', 'Â', 'Ã', 'â', 'ç'],
+        'windows1252_artifacts': ['€', '‚', 'ƒ', '„', '…', '†']
+    }
+
+def has_encoding_corruption(text: str, patterns) -> bool:
+    text_sample = text[:500]
+    corruption_score = 0
+    for category, pattern_list in patterns.items():
+        matches = sum(1 for pattern in pattern_list if pattern in text_sample)
+        if matches > 0:
+            corruption_score += matches
+    return corruption_score >= 2
+
+def repair_windows1251_corruption(text: str) -> str:
+    try:
+        return text.encode('windows-1251', errors='ignore').decode('utf-8', errors='ignore')
+    except (UnicodeError, LookupError):
+        return text
+
+def repair_latin1_corruption(text: str) -> str:
+    try:
+        return text.encode('iso-8859-1', errors='ignore').decode('utf-8', errors='ignore')
+    except (UnicodeError, LookupError):
+        return text
+
+def repair_cp1252_corruption(text: str) -> str:
+    try:
+        return text.encode('windows-1252', errors='ignore').decode('utf-8', errors='ignore')
+    except (UnicodeError, LookupError):
+        return text
+
+def repair_double_utf8(text: str) -> str:
+    try:
+        return text.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+    except UnicodeError:
+        return text
+
+def repair_mojibake_patterns(text: str) -> str:
+    mojibake_map = {
+        'Ã¡': 'á', 'Ã©': 'é', 'Ã­': 'í', 'Ã³': 'ó', 'Ãº': 'ú',
+        'Ã±': 'ñ', 'Ã¢': 'â', 'Ã´': 'ô', 'Ã¨': 'è', 'Ã ': 'à'
+    }
+    result = text
+    for corrupted, correct in mojibake_map.items():
+        if corrupted in result:
+            result = result.replace(corrupted, correct)
+    return result
+
+def repair_html_entities(text: str) -> str:
+    import html
+    try:
+        return html.unescape(text)
+    except Exception:
+        return text
+
+def evaluate_encoding_candidates(original_text: str, strategies) -> str:
+    best_result = original_text
+    best_score = calculate_text_quality_score(original_text)
+    
+    for i, strategy in enumerate(strategies, 1):
+        try:
+            candidate = strategy(original_text)
+            if candidate and len(candidate) > 0:
+                score = calculate_text_quality_score(candidate)
+                if score > best_score:
+                    best_result = candidate
+                    best_score = score
+        except Exception as e:
+            logger.debug(f"Strategy {i} failed: {e}")
+    
+    return best_result
+
+def calculate_text_quality_score(text: str) -> float:
+    if not text or len(text) == 0:
+        return 0.0
+    
+    score = 0.0
+    length = len(text)
+    
+    cyrillic_count = sum(1 for c in text if 'а' <= c <= 'я' or 'А' <= c <= 'Я')
+    latin_count = sum(1 for c in text if ('a' <= c <= 'z' or 'A' <= c <= 'Z'))
+    space_count = sum(1 for c in text if c.isspace())
+    
+    if cyrillic_count > 0:
+        score += (cyrillic_count / length) * 2.0
+    if latin_count > 0:
+        score += (latin_count / length) * 1.5
+    if 0.05 <= (space_count / length) <= 0.25:
+        score += 1.0
+    
+    corruption_patterns = get_encoding_corruption_patterns()
+    for pattern_list in corruption_patterns.values():
+        for pattern in pattern_list:
+            if pattern in text:
+                score -= 0.5
+    
+    return max(0.0, score)
+
+def normalize_text_final(text: str) -> str:
+    import unicodedata
+    try:
+        normalized = unicodedata.normalize('NFKC', text)
+        normalized = normalized.replace('\xa0', ' ')
+        import re
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        return normalized
+    except Exception:
+        return text
 
 def search_text(
     query: str,

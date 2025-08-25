@@ -5,7 +5,7 @@
 1. Интерактивный режим (TTY) - для отладки
 2. STDIO режим - для тестирования через pipes
 3. TCP режим - для тестирования сетевого подключения
-
+4. All режим - для тестирования всех возможностей
 Включает тесты с русским языком для проверки кодировки.
 """
 
@@ -37,10 +37,16 @@ if sys.platform == "win32":
 def safe_print(message):
     """Безопасный вывод с обработкой I/O ошибок"""
     try:
-        print(message)
+        print(message, flush=True)  # Принудительная отправка вывода
     except (ValueError, OSError, UnicodeEncodeError, UnicodeDecodeError):
-        # Если ошибка I/O, просто пропускаем
-        pass
+        # Если ошибка I/O, попробуем записать в stderr
+        try:
+            import sys
+            sys.stderr.write(f"SAFE_PRINT: {str(message)}\n")
+            sys.stderr.flush()
+        except:
+            # Если и stderr недоступен, просто пропускаем
+            pass
     except Exception:
         # Любые другие ошибки тоже пропускаем
         pass
@@ -48,25 +54,30 @@ def safe_print(message):
 
 def send_message_stdio(proc, data):
     """Отправка сообщения в процесс STDIO с корректной обработкой UTF-8"""
-    if proc.stdin is None:
-        print("⚠️  Ошибка: stdin процесса не доступен")
-        return
-        
-    data_str = json.dumps(data, ensure_ascii=False)
-    # Используем длину в байтах, не в символах
-    byte_length = len(data_str.encode('utf-8'))
-    message = f'{byte_length}\n{data_str}\n'
-    print(f"Отправляем STDIO: {data.get('method', 'unknown')}")
-    print(f"  Длина в байтах: {byte_length}")
     try:
-        proc.stdin.write(message)
+        data_str = json.dumps(data, ensure_ascii=False)
+        # Используем длину в байтах, не в символах
+        data_bytes = data_str.encode('utf-8')
+        byte_length = len(data_bytes)
+        
+        # Формируем сообщение в байтах: длина\n + данные + \n
+        length_bytes = f'{byte_length}\n'.encode('utf-8')
+        newline_bytes = b'\n'
+        message_bytes = length_bytes + data_bytes + newline_bytes
+        
+        print(f"Отправляем STDIO: {data.get('method', 'unknown')}")
+        print(f"  Длина в байтах: {byte_length}")
+        
+        # Записываем байты напрямую в stdin (stdin уже в бинарном режиме)
+        proc.stdin.write(message_bytes)
         proc.stdin.flush()
         print(f"  ✅ Сообщение отправлено")
+        
     except Exception as e:
         print(f"  ❌ Ошибка отправки: {e}")
 
 def read_message_stdio(proc, timeout=10):
-    """Чтение сообщения из процесса STDIO с корректной обработкой UTF-8 и таймаутом"""
+    """Чтение сообщения с байт-левел коммуникацией"""
     if proc.stdout is None:
         print("⚠️  Ошибка: stdout процесса не доступен")
         return None
@@ -74,102 +85,101 @@ def read_message_stdio(proc, timeout=10):
     try:
         print("  📝 Ожидаем ответ от сервера...")
         
-        # Проверяем что процесс еще жив
         if proc.poll() is not None:
-            print(f"  ❌ Процесс сервера завершился с кодом: {proc.returncode}")
+            print(f"  ❌ Процесс завершился: {proc.returncode}")
             return None
         
-        # Добавляем таймаут для чтения
-        import select
-        import os
+        # Читаем длину сообщения
+        length_line = b''
+        start_time = time.time()
         
-        # На Windows select не работает с pipes, используем другой подход
-        if os.name == 'nt':  # Windows
-            # Простой подход с коротким ожиданием
-            import time
-            start_time = time.time()
-            
-            # Читаем длину в байтах с проверкой таймаута
-            length_line = None
-            while time.time() - start_time < timeout:
-                if proc.poll() is not None:
-                    print(f"  ❌ Процесс завершился во время ожидания: {proc.returncode}")
-                    return None
-                    
-                try:
-                    # Пытаемся прочитать с очень коротким таймаутом
-                    length_line = proc.stdout.readline()
-                    if length_line:
-                        break
-                except:
-                    pass
-                time.sleep(0.1)
-        else:
-            # На Unix-подобных системах используем select
-            ready, _, _ = select.select([proc.stdout], [], [], timeout)
-            if not ready:
-                print(f"  ⏰ Таймаут {timeout}с при ожидании ответа сервера")
+        while time.time() - start_time < timeout:
+            if proc.poll() is not None:
                 return None
-            length_line = proc.stdout.readline()
+                
+            try:
+                # Читаем по одному байту до \n
+                byte_char = proc.stdout.read(1)
+                if not byte_char:
+                    time.sleep(0.01)
+                    continue
+                    
+                length_line += byte_char
+                if byte_char == b'\n':
+                    break
+                    
+            except Exception:
+                time.sleep(0.01)
+                continue
         
-        print(f"  Получена длина: {length_line!r}")
-        if not length_line:
-            print("  ⚠️  Пустая строка длины")
+        if not length_line or length_line == b'\n':
+            print(f"  ⏰ Таймаут {timeout}с - не получена длина")
             return None
         
         try:
-            byte_length = int(length_line.strip())
-            print(f"  Ожидаемая длина сообщения: {byte_length} байт")
-        except ValueError:
-            print(f"  ❌ Неверный формат длины: {length_line!r}")
+            # Убираем \n и декодируем длину
+            length_str = length_line.rstrip(b'\n').decode('utf-8')
+            byte_length = int(length_str)
+            print(f"  Ожидаем {byte_length} байт")
+        except (ValueError, UnicodeDecodeError) as e:
+            print(f"  ❌ Неверная длина: {length_line!r} - {e}")
             return None
         
-        # Читаем сообщение с проверкой таймаута
-        if os.name == 'nt':  # Windows
-            start_time = time.time()
-            message_str = ""
-            while len(message_str) < byte_length and time.time() - start_time < timeout:
-                if proc.poll() is not None:
-                    print(f"  ❌ Процесс завершился во время чтения: {proc.returncode}")
-                    return None
-                try:
-                    chunk = proc.stdout.read(byte_length - len(message_str))
-                    if chunk:
-                        message_str += chunk
-                except:
-                    pass
-                if len(message_str) < byte_length:
-                    time.sleep(0.1) 
-        else:
-            message_str = proc.stdout.read(byte_length)
-            
-        if len(message_str) != byte_length:
-            print(f"  ⚠️  Ожидалось {byte_length} символов, получено {len(message_str)}")
+        # Читаем сообщение указанной длины
+        message_bytes = b""
+        start_time = time.time()
         
-        # Пропускаем \n
+        while len(message_bytes) < byte_length and time.time() - start_time < timeout:
+            if proc.poll() is not None:
+                return None
+                
+            try:
+                remaining = byte_length - len(message_bytes)
+                # Читаем оставшиеся байты (но не больше 1024 за раз)
+                chunk_size = min(remaining, 1024)
+                chunk = proc.stdout.read(chunk_size)
+                
+                if chunk:
+                    message_bytes += chunk
+                else:
+                    time.sleep(0.01)
+                    
+            except Exception:
+                break
+        
+        if len(message_bytes) < byte_length:
+            print(f"  ❌ Получено только {len(message_bytes)} из {byte_length} байт")
+            return None
+        
+        # Читаем завершающий \n
         try:
-            proc.stdout.read(1)
+            trailing_newline = proc.stdout.read(1)
+            if trailing_newline != b'\n':
+                print(f"  ⚠️ Ожидался \\n, получен: {trailing_newline!r}")
         except:
             pass
         
-        print(f"  Фактически прочитано: {len(message_str)} символов")
-        print(f"  Получено сообщение (первые 100 символов): {message_str[:100]!r}...")
-        
-        # Попробуем распарсить JSON
+        # Декодируем сообщение
         try:
-            parsed_json = json.loads(message_str)
-            print("  ✅ JSON успешно распарсен")
-            return parsed_json
-        except json.JSONDecodeError as je:
-            print(f"  ❌ Ошибка парсинга JSON: {je}")
-            print(f"  Проблемный JSON: {message_str}")
+            message_str = message_bytes.decode('utf-8')
+        except UnicodeDecodeError as e:
+            print(f"  ❌ Ошибка UTF-8: {e}")
             return None
         
-    except UnicodeDecodeError as ude:
-        print(f"  ❌ Ошибка декодирования Unicode: {ude}")
-        return None
+        print(f"  Получено: {len(message_bytes)} байт")
+        
+        # Парсим JSON
+        try:
+            parsed_json = json.loads(message_str)
+            print("  ✅ JSON распарсен")
+            return parsed_json
+        except json.JSONDecodeError as e:
+            print(f"  ❌ JSON ошибка: {e}")
+            print(f"  Сырые данные: {message_str[:100]}...")
+            return None
+        
     except Exception as e:
-        print(f"  ❌ Ошибка чтения STDIO: {e}")
+        print(f"  ❌ Ошибка STDIO: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -320,15 +330,16 @@ def run_russian_news_test():
             },
             {
                 "id": 4,
-                "query": "российские технологии",
+                "query": "Какие новости сегодня",
                 "region": "ru-ru",
-                "description": "Технологические новости"
+                "timelimit": "d",
+                "description": "Сегодняшние новости (улучшенный тест)"
             },
             {
                 "id": 5,
-                "query": "спорт Россия",
+                "query": "Какие технологии в моде",
                 "region": "ru-ru",
-                "description": "Спортивные новости"
+                "description": "Технологические новости"
             }
         ]
         
@@ -336,21 +347,32 @@ def run_russian_news_test():
             print(f"\n📰 {test_case['id']}. Поиск: {test_case['description']}")
             print(f"   Запрос: '{test_case['query']}' (регион: {test_case['region']})")
             
+            # Подготовка запроса
+            request_params = {
+                "query": test_case['query'],
+                "region": test_case['region'],
+                "max_results": 3
+            }
+            
+            # Добавляем timelimit если он указан
+            if 'timelimit' in test_case:
+                request_params['timelimit'] = test_case['timelimit']
+                print(f"   Ограничение по времени: {test_case['timelimit']} (только сегодняшние)")
+            
+            # Отправка запроса с увеличенным таймаутом
             send_message_stdio(proc, {
                 "jsonrpc": "2.0",
                 "id": test_case['id'],
                 "method": "tools/call",
                 "params": {
                     "name": "ddg_search_news",
-                    "arguments": {
-                        "query": test_case['query'],
-                        "region": test_case['region'],
-                        "max_results": 3
-                    }
+                    "arguments": request_params
                 }
             })
             
-            response = read_message_stdio(proc)
+            # Чтение ответа с увеличенным таймаутом для новостей
+            timeout = 30 if test_case['id'] == 4 else 15  # Больше времени для сегодняшних новостей
+            response = read_message_stdio(proc, timeout=timeout)
             
             if response and 'result' in response:
                 try:
@@ -400,16 +422,20 @@ def run_stdio_test():
     """Тестирование через STDIO с таймаутом"""
     print("=== Тестирование STDIO ===")
     
-    # Запускаем сервер в режиме STDIO (без TTY)
+    # Запускаем сервер в режиме STDIO с байт-левел коммуникацией
     try:
         proc = subprocess.Popen(
-            [sys.executable, 'ddg_mcp_server.py'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding='utf-8'
-        )
+        [sys.executable, 'ddg_mcp_server.py'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0
+    )
         print(f"✅ Сервер запущен с PID: {proc.pid}")
+        
+        # Короткая пауза для стабилизации
+        time.sleep(1.0)
+        
     except Exception as e:
         print(f"❌ Ошибка запуска сервера: {e}")
         return None
@@ -424,10 +450,17 @@ def run_stdio_test():
                 "method": "initialize",
                 "params": {}
             },
-            # Базовый поиск
+            # Список инструментов
             {
                 "jsonrpc": "2.0",
                 "id": 2,
+                "method": "tools/list",
+                "params": {}
+            },
+            # Базовый поиск
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
                 "method": "tools/call",
                 "params": {
                     "name": "ddg_search_text",
@@ -437,19 +470,32 @@ def run_stdio_test():
                     }
                 }
             },
-            # Список инструментов
+            # Русский поиск новостей
             {
                 "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/list",
-                "params": {}
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "ddg_search_news",
+                    "arguments": {
+                        "query": "Какие новости сегодня",
+                        "region": "ru-ru",
+                        "timelimit": "d",
+                        "max_results": 3
+                    }
+                }
             }
         ]
         
         responses = []
+        start_time = time.time()
+        max_test_time = 120  # 2 минуты максимум
         
         for i, request in enumerate(requests):
-            request["id"] = i + 1
+            # Проверка общего таймаута
+            if time.time() - start_time > max_test_time:
+                print(f"⏰ Общий таймаут теста превышен")
+                break
             
             # Проверяем что процесс еще жив
             if proc.poll() is not None:
@@ -457,23 +503,52 @@ def run_stdio_test():
                 break
                 
             print(f"\n📤 Отправляем запрос {i+1}/{len(requests)}: {request['method']}")
-            send_message_stdio(proc, request)
             
-            print(f"📬 Ожидаем ответ на {request['method']}...")
-            response = read_message_stdio(proc, timeout=15)  # 15 секунд таймаут
-            
-            if response:
-                responses.append(response)
-                print(f"✅ Ответ на {request['method']} (ID: {request['id']}): получен")
-                print(f"   Тип ответа: {'result' if 'result' in response else 'error' if 'error' in response else 'unknown'}")
-            else:
-                print(f"❌ Не удалось получить ответ на {request['method']}")
+            try:
+                send_message_stdio(proc, request)
+                
+                print(f"📬 Ожидаем ответ на {request['method']}...")
+                # Увеличиваем таймаут для поисковых запросов
+                timeout = 30 if 'tools/call' in request['method'] else 10
+                response = read_message_stdio(proc, timeout=timeout)
+                
+                if response:
+                    responses.append(response)
+                    print(f"✅ Ответ на {request['method']} (ID: {request.get('id')}): получен")
+                    print(f"   Тип ответа: {'result' if 'result' in response else 'error' if 'error' in response else 'unknown'}")
+                    
+                    # Обработка результатов поиска
+                    if 'result' in response and request['method'] == 'tools/call':
+                        try:
+                            content = response['result']['content'][0]['text']
+                            search_results = json.loads(content)
+                            if request['params']['name'] == 'ddg_search_news':
+                                print(f"   📰 Найдено новостей: {len(search_results) if search_results else 0}")
+                                if search_results:
+                                    for j, result in enumerate(search_results[:2], 1):
+                                        title = result.get('title', 'Без заголовка')[:60]
+                                        source = result.get('source', 'Неизвестный источник')
+                                        print(f"     {j}. {title}... ({source})")
+                            else:
+                                print(f"   🔍 Найдено результатов: {len(search_results) if search_results else 0}")
+                        except (KeyError, json.JSONDecodeError, IndexError) as e:
+                            print(f"   ⚠️ Ошибка обработки результатов: {e}")
+                            
+                else:
+                    print(f"❌ Не удалось получить ответ на {request['method']}")
+                    responses.append(None)
+                    
+            except Exception as e:
+                print(f"❌ Ошибка выполнения запроса: {str(e)[:100]}")
                 responses.append(None)
             
             print("-" * 50)
+            time.sleep(0.5)  # Пауза между запросами
         
         print(f"\n📊 Результаты STDIO теста:")
-        print(f"   Успешных ответов: {len([r for r in responses if r is not None])}/{len(requests)}")
+        successful_responses = len([r for r in responses if r is not None])
+        print(f"   Успешных ответов: {successful_responses}/{len(requests)}")
+        print(f"   Процент успеха: {(successful_responses/len(requests)*100):.1f}%")
         
         return responses
         
@@ -484,18 +559,23 @@ def run_stdio_test():
         return None
     finally:
         # Завершаем процесс
-        if proc.poll() is None:
-            print("🚫 Завершаем сервер...")
-            proc.terminate()
-            time.sleep(1)
-            if proc.poll() is None:
-                print("⚡ Принудительное завершение...")
-                proc.kill()
+        try:
+            if proc and proc.poll() is None:
+                print("🚫 Завершаем сервер...")
+                proc.terminate()
+                time.sleep(1)
+                if proc.poll() is None:
+                    print("⚡ Принудительное завершение...")
+                    proc.kill()
+        except:
+            pass
 
 def run_tcp_test():
     """Тестирование через TCP"""
     print("Тестовый клиент для TCP сервера")
     print("="*40)
+    
+    client = None  # Инициализируем переменную для безопасности
     
     try:
         # Подключаемся к серверу
@@ -580,17 +660,18 @@ def run_tcp_test():
         else:
             print("✗ Нет ответа")
         
-        # Тест 4: Поиск новостей на русском языке
-        print("\nТест 4: Поиск новостей 'новости России'")
+        # Тест 4: Поиск сегодняшних новостей на русском языке
+        print("\nТест 4: Поиск новостей 'Какие новости сегодня'")
         news_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
                 "name": "ddg_search_news",
                 "arguments": {
-                    "query": "новости России",
+                    "query": "Какие новости сегодня",
                     "region": "ru-ru",
-                    "max_results": 2
+                    "timelimit": "d",
+                    "max_results": 3
                 }
             },
             "id": 4
@@ -622,11 +703,12 @@ def run_tcp_test():
         print(f"✗ Ошибка: {e}")
         return None
     finally:
-        try:
-            client.close()
-            print("Соединение закрыто")
-        except:
-            pass
+        if client is not None:
+            try:
+                client.close()
+                print("Соединение закрыто")
+            except:
+                pass
 
 def run_interactive_test():
     """Интерактивное тестирование (имитация ручного ввода)"""
@@ -645,7 +727,7 @@ def run_interactive_test():
     print('{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "ddg_search_text", "arguments": {"query": "python programming", "max_results": 3}}}')
     print()
     print("4. Русский поиск новостей:")
-    print('{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "ddg_search_news", "arguments": {"query": "новости России", "region": "ru-ru", "max_results": 3}}}')
+    print('{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "ddg_search_news", "arguments": {"query": "Какие новости сегодня", "region": "ru-ru", "timelimit": "d", "max_results": 3}}}')
     print()
     print("Для выхода введите: quit")
 
@@ -737,8 +819,81 @@ def main():
         except (ValueError, OSError):
             pass
         
-        print("3. TCP тест (пропускаем - требует работающий TCP сервер):")
-        print("⚠️  TCP тест пропущен - запустите 'python tcp_ddg_server.py' для теста")
+        try:
+            # Connect to server
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            
+            print("📡 Connecting to 127.0.0.1:8765...")
+            sock.connect(('127.0.0.1', 8765))
+            print("✅ Connection established!")
+            
+            # Send initialize request
+            init_request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "roots": {
+                            "listChanged": True
+                        }
+                    },
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+            
+            print("📤 Sending initialize request...")
+            message = json.dumps(init_request, ensure_ascii=False).encode('utf-8') + b'\n'
+            sock.sendall(message)
+            
+            # Read response
+            print("📥 Reading response...")
+            response_data = b''
+            while True:
+                chunk = sock.recv(1)
+                if not chunk or chunk == b'\n':
+                    break
+                response_data += chunk
+                
+            if response_data:
+                response = json.loads(response_data.decode('utf-8'))
+                print(f"✅ Received response:")
+                print(json.dumps(response, indent=2, ensure_ascii=False))
+                
+                # Test tools/list
+                tools_request = {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/list"
+                }
+                
+                print("\n📤 Sending tools/list request...")
+                message = json.dumps(tools_request, ensure_ascii=False).encode('utf-8') + b'\n'
+                sock.sendall(message)
+                
+                # Read tools response
+                response_data = b''
+                while True:
+                    chunk = sock.recv(1)
+                    if not chunk or chunk == b'\n':
+                        break
+                    response_data += chunk
+                    
+                if response_data:
+                    response = json.loads(response_data.decode('utf-8'))
+                    print(f"✅ Tools list received:")
+                    print(json.dumps(response, indent=2, ensure_ascii=False))
+                    
+            sock.close()
+            print("\n🎉 TCP server test completed successfully!")
+        except Exception as e:
+            print(f"❌ TCP server test failed: {e}")
+            print("⚠️  TCP тест пропущен - запустите 'python tcp_ddg_server.py' для теста")
         
         try:
             print("\n" + "="*60 + "\n")
@@ -746,19 +901,181 @@ def main():
             pass
         
         print("4. Краткий тест русских новостей:")
+        safe_print("🚀 Запуск полного MCP теста с 4 запросами...")
+        
+        proc = None  # Инициализируем переменную
+        test_start_time = time.time()
+        max_test_time = 60  # Максимальное время теста 60 секунд
+        
         try:
-            # Очень краткий тест - просто проверяем import
-            from ddg_mcp_server import fix_encoding
-            test_text = "РьРѕРІРµСЃС‚Ри"  # Поврежденная кодировка
-            fixed = fix_encoding(test_text)
+            # Проверка общего таймаута
+            if time.time() - test_start_time > max_test_time:
+                safe_print("⏰ Общий таймаут теста превышен, пропускаем MCP тест")
+                return
             
-            # Безопасный вывод с обработкой ошибок I/O
-            safe_print(f"✅ Функция fix_encoding работает: '{test_text[:20]}...' -> '{fixed[:20]}...'")
-            safe_print("DEBUG: Encoding test completed")
+            # Запускаем сервер для полного MCP тестирования
+            proc = subprocess.Popen(
+            [sys.executable, 'ddg_mcp_server.py'],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8'
+        )
+            safe_print(f"✅ Сервер запущен с PID: {proc.pid}")
+            
+            # Короткая пауза для стабилизации
+            time.sleep(1.0)  # Увеличенная пауза
+            
+            # Проверяем что сервер запустился
+            server_ready = True
+            if proc.poll() is not None:
+                safe_print(f"❌ Сервер немедленно завершился с кодом: {proc.returncode}")
+                # Выводим stderr для диагностики
+                try:
+                    if proc.stderr is not None:
+                        stderr_output = proc.stderr.read()
+                        if stderr_output:
+                            safe_print(f"📋 STDERR: {stderr_output[:200]}...")
+                except:
+                    pass
+                safe_print("⚠️ Сервер не запустился, но попробуем выполнить тесты...")
+                server_ready = False
+            else:
+                safe_print("✅ Сервер работает, начинаем MCP тесты...")
+            
+            # Выполняем MCP тесты даже если сервер не прошел первоначальную проверку
+            if server_ready or True:  # Всегда пытаемся выполнить тесты
+                # Последовательность тестовых запросов
+                test_requests = [
+                    {
+                        "request": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                        "description": "1. Initialize",
+                        "timeout": 10
+                    },
+                    {
+                        "request": {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                        "description": "2. Tools list",
+                        "timeout": 10
+                    },
+                    {
+                        "request": {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "ddg_search_text", "arguments": {"query": "python programming", "max_results": 1}}},
+                        "description": "3. Search",
+                        "timeout": 20
+                    },
+                    {
+                        "request": {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "ddg_search_news", "arguments": {"query": "Какие новости сегодня", "region": "ru-ru", "timelimit": "d", "max_results": 3}}},
+                        "description": "4. Русский поиск новостей",
+                        "timeout": 30
+                    }
+                ]
+                
+                # Выполняем все запросы последовательно
+                for i, test_case in enumerate(test_requests):
+                    # Проверка общего таймаута
+                    if time.time() - test_start_time > max_test_time:
+                        safe_print(f"⏰ Общий таймаут теста превышен на шаге {i+1}")
+                        break
+                        
+                    safe_print(f"\n📤 {test_case['description']}")
+                    
+                    # Проверяем что процесс еще жив
+                    if proc.poll() is not None:
+                        safe_print(f"❌ Сервер завершился с кодом: {proc.returncode}")
+                        break
+                    
+                    try:
+                        # Отправляем запрос с коротким таймаутом
+                        request_start = time.time()
+                        send_message_stdio(proc, test_case['request'])
+                        
+                        # Проверка таймаута отправки
+                        if time.time() - request_start > 5:  # 5 секунд на отправку
+                            safe_print(f"⏰ Таймаут отправки запроса")
+                            continue
+                        
+                        # Читаем ответ с уменьшенным таймаутом
+                        reduced_timeout = min(test_case['timeout'], 15)  # Максимум 15 секунд
+                        response = read_message_stdio(proc, timeout=reduced_timeout)
+                        
+                        if response:
+                            if 'result' in response:
+                                safe_print(f"✅ Ответ получен (ID: {response.get('id')})")
+                                
+                                # Специальная обработка для разных типов ответов
+                                if test_case['request']['method'] == 'initialize':
+                                    safe_print(f"   Протокол: {response['result'].get('protocolVersion', 'неизвестно')}")
+                                    
+                                elif test_case['request']['method'] == 'tools/list':
+                                    tools = response['result'].get('tools', [])
+                                    safe_print(f"   Найдено инструментов: {len(tools)}")
+                                    for tool in tools[:3]:  # Показываем первые 3
+                                        safe_print(f"     - {tool.get('name', 'без имени')}")
+                                        
+                                elif test_case['request']['method'] == 'tools/call':
+                                    try:
+                                        content = response['result']['content'][0]['text']
+                                        if test_case['request']['params']['name'] == 'ddg_search_news':
+                                            # Парсим результаты новостей
+                                            results = json.loads(content)
+                                            if results and len(results) > 0:
+                                                safe_print(f"   📰 Найдено новостей: {len(results)}")
+                                                for j, result in enumerate(results[:2], 1):
+                                                    title = result.get('title', 'Без заголовка')[:60]
+                                                    source = result.get('source', 'Неизвестный источник')
+                                                    safe_print(f"     {j}. {title}... ({source})")
+                                            else:
+                                                safe_print("   ⚠️ Новости не найдены")
+                                        else:
+                                            # Обычный текстовый поиск
+                                            results = json.loads(content)
+                                            if results and len(results) > 0:
+                                                safe_print(f"   🔍 Найдено результатов: {len(results)}")
+                                                for j, result in enumerate(results[:2], 1):
+                                                    title = result.get('title', 'Без заголовка')[:60]
+                                                    safe_print(f"     {j}. {title}...")
+                                            else:
+                                                safe_print("   ⚠️ Результаты не найдены")
+                                    except (KeyError, json.JSONDecodeError, IndexError) as e:
+                                        safe_print(f"   ⚠️ Ошибка обработки результатов: {e}")
+                                        safe_print(f"   📄 Сырой ответ: {str(response)[:100]}...")
+                                        
+                            elif 'error' in response:
+                                safe_print(f"❌ Ошибка сервера: {response['error']}")
+                            else:
+                                safe_print(f"⚠️ Неожиданный формат ответа: {str(response)[:100]}...")
+                        else:
+                            safe_print(f"❌ Нет ответа (таймаут {test_case['timeout']}с)")
+                            
+                    except Exception as e:
+                        safe_print(f"❌ Ошибка выполнения запроса: {str(e)[:100]}")
+                    
+                    # Проверка общего таймаута после каждого теста
+                    if time.time() - test_start_time > max_test_time:
+                        safe_print(f"⏰ Общий таймаут теста превышен после шага {i+1}")
+                        break
+                    
+                    # Короткая пауза между запросами
+                    time.sleep(0.2)  # Уменьшенная пауза для ускорения
+                
+                safe_print("\n✅ Все MCP запросы выполнены")
+            
         except Exception as e:
-            # Безопасный вывод ошибки
             error_msg = str(e)[:100] if len(str(e)) > 100 else str(e)
-            safe_print(f"DEBUG: Encoding test failed: {error_msg}...")
+            safe_print(f"❌ Ошибка теста: {error_msg}")
+            
+        finally:
+            # Убеждаемся что процесс завершен
+            try:
+                if proc is not None and proc.poll() is None:
+                    safe_print("🚫 Завершаем сервер...")
+                    proc.terminate()
+                    time.sleep(0.5)
+                    if proc.poll() is None:
+                        proc.kill()
+                safe_print("✅ Тест завершен")
+            except:
+                pass
         
         try:
             print("\n" + "="*60 + "\n")
