@@ -246,6 +246,47 @@ Jan:
 ```
 
 ### Конфигурация с использованием Python из venv (рекомендуется)
+
+**Для Windows:**
+```json
+{
+  "mcpServers": {
+    "ddg-stdio": {
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "C:\\Users\\Igor\\Desktop\\duck_duck_MCP\\venv\\Scripts\\python.exe",
+      "args": ["C:\\Users\\Igor\\Desktop\\duck_duck_MCP\\ddg_mcp_server.py"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
+```
+
+**Важно:**
+- Замените `C:\\Users\\Igor\\Desktop\\duck_duck_MCP` на ваш реальный путь к проекту
+- Используйте двойные обратные слashes (`\\`) в путях для Windows
+- Убедитесь, что в venv установлены все зависимости: `pip install -r requirements.txt`
+- Переменная окружения `PYTHONIOENCODING=utf-8` обязательна для правильной работы с кириллицей
+
+**Для Linux/macOS:**
+```json
+{
+  "mcpServers": {
+    "ddg-stdio": {
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "/path/to/duck_duck_MCP/venv/bin/python",
+      "args": ["/path/to/duck_duck_MCP/ddg_mcp_server.py"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
 ```
 {
   "mcpServers": {
